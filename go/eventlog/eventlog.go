@@ -119,6 +119,61 @@ func (cc *ChannelConfig) GetProperty(propertyID wevtapi.EvtChannelConfigProperty
 	return makeVariant(buf, 0)
 }
 
+// Log represents a handle to a channel or log file.
+//
+// Use Session.OpenLog to obtain a Log.
+type Log Handle
+
+// Close releases a Log.
+func (cc *Log) Close() {
+	if cc != nil {
+		wevtapi.EvtClose(cc.handle)
+	}
+}
+
+// GetLogInfo gets information about a channel or log file.
+//
+// PropertyID must be a wevtapi.EvtLogPropertyID.
+//
+// Results are returned as an EvtVariant with the corresponding property type populated.
+//
+// Example:
+//   info, err = log.GetLogInfo(wevtapi.EvtLogCreationTime)
+// 	 if err != nil {
+//	   return err
+//	 }
+//   fmt.Println(time.Unix(0, info.Data.FileTimeVal.Nanoseconds()))
+//
+// Ref: https://learn.microsoft.com/en-us/windows/win32/api/winevt/nf-winevt-evtgetloginfo
+func (log *Log) GetLogInfo(propertyID wevtapi.EvtLogPropertyID) (EvtVariant, error) {
+	var bufferUsed uint32
+	v := EvtVariant{}
+
+	// Call with a null buffer to get the required buffer size.
+	err := wevtapi.EvtGetLogInfo(
+		log.handle,
+		propertyID,
+		0,
+		nil,
+		&bufferUsed)
+	if err != syscall.ERROR_INSUFFICIENT_BUFFER {
+		return v, err
+	}
+
+	buf := make([]byte, bufferUsed)
+	err = wevtapi.EvtGetLogInfo(
+		log.handle,
+		propertyID,
+		bufferUsed,
+		unsafe.Pointer(&buf[0]),
+		&bufferUsed)
+	if err != nil {
+		return v, err
+	}
+
+	return makeVariant(buf, 0)
+}
+
 // An Event is a Handle to an event.
 type Event Handle
 
@@ -342,6 +397,26 @@ func (s *Session) OpenChannelConfig(logID string) (ChannelConfig, error) {
 
 	cc.handle, err = wevtapi.EvtOpenChannelConfig(s.handle, syscall.StringToUTF16Ptr(logID), 0)
 	return cc, err
+}
+
+// OpenLog gets a handle to a channel or log file that you can then use to get information about the channel or log file.
+//
+// You must call Close() on the resulting Log when finished.
+//
+// Example:
+//   s.OpenLog("Microsoft-Windows-DriverFrameworks-UserMode/Operational", wevtapi.EVT_READ_ACCESS)
+//
+// Ref: https://docs.microsoft.com/en-us/windows/win32/api/winevt/nf-winevt-evtopenlog
+func (s *Session) OpenLog(logID string, flags uint32) (Log, error) {
+	log := Log{}
+	var err error
+
+	if logID == "" {
+		return log, fmt.Errorf("must supply a log id")
+	}
+
+	log.handle, err = wevtapi.EvtOpenLog(s.handle, syscall.StringToUTF16Ptr(logID), flags)
+	return log, err
 }
 
 // OpenPublisherMetadata gets a handle that you use to read the specified provider's metadata.
